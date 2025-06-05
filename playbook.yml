@@ -1,0 +1,61 @@
+
+---
+- name: Create users with SSH key auth and passwordless sudo via keyauth group
+  hosts: all
+  become: yes
+  vars_files:
+    - users.yml
+
+  tasks:
+
+    - name: Ensure the 'keyauth' group exists
+      ansible.builtin.group:
+        name: keyauth
+        state: present
+
+    - name: Create user accounts and add to 'keyauth' group only (remove from wheel)
+      ansible.builtin.user:
+        name: "{{ item.username }}"
+        state: present
+        shell: /bin/bash
+        groups: keyauth
+        append: no
+      loop: "{{ users }}"
+
+    - name: Ensure home directory has correct permissions
+      ansible.builtin.file:
+        path: "/home/{{ item.username }}"
+        mode: '0755'
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+      loop: "{{ users }}"
+
+    - name: Ensure .ssh directory exists with correct permissions
+      ansible.builtin.file:
+        path: "/home/{{ item.username }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+      loop: "{{ users }}"
+
+    - name: Restore SELinux context on .ssh directories and files
+      ansible.builtin.command: restorecon -Rv /home/{{ item.username }}/.ssh
+      loop: "{{ users }}"
+      changed_when: false
+
+    - name: Remove user-specific sudoers file (if exists)
+      ansible.builtin.file:
+        path: "/etc/sudoers.d/{{ item.username }}"
+        state: absent
+      loop: "{{ users }}"
+
+    - name: Ensure 'keyauth' group has passwordless sudo access
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/keyauth
+        content: "%keyauth ALL=(ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
